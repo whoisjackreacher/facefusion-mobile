@@ -20,15 +20,17 @@ jobs:
 
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
+        with:
+          packages: '' # Keeps it empty to bypass the failing automatic sdkmanager command
 
-      - name: Build Debug APK
+      - name: Accept Licenses & Build Debug APK
         run: |
+          yes | sdkmanager --licenses || true
           chmod +x gradlew
           ./gradlew assembleDebug
-
+          
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
           name: facefusion-mobile-debug
           path: app/build/outputs/apk/debug/*.apk
-          
