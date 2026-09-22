@@ -18,33 +18,20 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
-      - name: Accept SDK Licenses
-        run: |
-          yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses || true
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+          cache: true
+
+      - name: Install Project Dependencies
+        run: flutter pub get
 
       - name: Build Debug APK
-        run: |
-          # Detect if gradlew is in the root or a subfolder, then build
-          if [ -f "./gradlew" ]; then
-            chmod +x gradlew
-            ./gradlew assembleDebug
-          elif [ -f "./app/gradlew" ]; then
-            cd app
-            chmod +x gradlew
-            ./gradlew assembleDebug
-          elif [ -f "./android/gradlew" ]; then
-            cd android
-            chmod +x gradlew
-            ./gradlew assembleDebug
-          else
-            echo "Error: Could not find gradlew file in root, app, or android folders."
-            exit 1
-          fi
-          
+        run: flutter build apk --debug
+
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
           name: facefusion-mobile-debug
-          path: |
-            app/build/outputs/apk/debug/*.apk
-            **/build/outputs/apk/debug/*.apk
+          path: build/app/outputs/flutter-apk/*.apk
