@@ -18,14 +18,12 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
-        with:
-          packages: '' # Keeps it empty to bypass the failing automatic sdkmanager command
-
-      - name: Accept Licenses & Build Debug APK
+      - name: Accept SDK Licenses
         run: |
-          yes | sdkmanager --licenses || true
+          yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses || true
+
+      - name: Build Debug APK
+        run: |
           chmod +x gradlew
           ./gradlew assembleDebug
           
