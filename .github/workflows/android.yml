@@ -10,10 +10,6 @@ jobs:
   build:
     runs-on: ubuntu-latest
 
-    env:
-      ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
-      ANDROID_HOME: /usr/local/lib/android/sdk
-
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -25,34 +21,43 @@ jobs:
           java-version: '17'
           cache: gradle
 
+      - name: Find Android SDK
+        shell:name sdkmanager -perm -111 2>/dev/null | head -n 1)"
+
+          if [ -z "$SDKMANAGER" ]; then
+            SDKMANAGER="$(find "/usr/local/lib/android/sdk" -type f -name sdkmanager 2>/dev/null | head -n 1)"
+          fi
+
+          if [ -z "$SDKMANAGER" ]; then
+            echo "sdkmanager was not found"
+            find "$ANDROID_HOME" -maxdepth 4 -type f 2>/dev/null | head -100
+            exit 1
+          fi
+
+          echo "Found sdkmanager at: $SDKMANAGER"
+          echo "SDKMANAGER=$SDKMANAGER" >> "$GITHUB_ENV"
+
       - name: Install Android packages
+        shell: bash
         run: |
-          SDKMANAGER="$ANDROID_SDK_ROOT/cmdline-tools/16.0/bin/sdkmanager"
+          set -e
 
-          yes | "$SDKMANAGER" --sdk_root="$ANDROID_SDK_ROOT" --licenses || true
+          yes | "$SDKMANAGER" --licenses >/dev/null || true
 
-          "$SDKMANAGER" --sdk_root="$ANDROID_SDK_ROOT" --install \
+          "$SDKMANAGER" --install \
             "platform-tools" \
             "platforms;android-35" \
             "build-tools;34.0.0" \
             "cmake;3.22.1" \
-            "ndk;27.2.12479018"
-
-      - name: Verify project files
-        run: |
-          pwd
-          find work/android -maxdepth 1 -type f -print
-          test -f work/android/gradlew
+            "ndk;27.2.124.gradle.kts
+          ls -la work/android
 
       - name: Build Debug APK
+        shell: bash
         run: |
+          set -e
           cd work/android
           chmod +x ./gradlew
-          ./gradlew --no-daemon --stacktrace :app:assembleDebug
-
-      - name: Upload APK
-        uses: actions/upload-artifact@v4
-        with:
-          name: facefusion-mobile-debug
+          ./gradlewfusion-mobile-debug
           path: work/android/app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
