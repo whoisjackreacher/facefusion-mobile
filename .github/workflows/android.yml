@@ -8,63 +8,114 @@ permissions:
 
 jobs:
   build:
-    name: Build Android APK
     runs-on: ubuntu-latest
-
-    env:
-      ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
-      ANDROID_HOME: /usr/local/lib/android/sdk
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      -  name: Set up Java 17
+      - name: Set up Java 17
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '17'
           cache: gradle
 
-      - name: Install required Android packages
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android SDK packages
         shell: bash
         run: |
-          set -euxo pipefail
+          set -Eeuo pipefail
 
-          SDKMANAGER="$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"
-
-          if [ ! -x "$SDKMANAGER" ]; then
-            SDKMANAGER="$ANDROID_SDK_ROOT/cmdline-tools/16.0/bin/sdkmanager"
-          fi
-
-          yes | "$SDKMANAGER" --sdk_root="$ANDROID_SDK_ROOT" --licenses >/dev/null || true
-
-          "$SDKMANAGER" --sdk_root="$ANDROID_SDK_ROOT" --install \
+          sdkmanager --install \
             "platform-tools" \
             "platforms;android-35" \
             "build-tools;34.0.0" \
             "cmake;3.22.1" \
             "ndk;27.2.12479018"
 
-      - name: Verify Android project
+          yes | sdkmanager --licenses >/dev/null || true
+
+      - name: Download matching native libraries
         shell: bash
+        working-directory: work/android
         run: |
-          set -euxo pipefail
-          test -f work/android/gradlew
-          test -f work/android/settings.gradle.kts
-          ls -la work/android
+          set -Eeuo pipefail
+
+          mkdir -p "$RUNNER_TEMP/upstream-apk"
+          mkdir -p prebuilt-native/arm64-v8a
+
+          curl --fail --location \
+            --retry 5 \
+            --retry-all-errors \
+            -o "$RUNNER_TEMP/upstream-apk/facefusion-mobile.apk" \
+            "https://github.com/AbrahamPaulJ/facefusion-mobile/releases/download/v0.9.0/facefusion-mobile-0.9.0-release.apk"
+
+          unzip -l "$RUNNER_TEMP/upstream-apk/facefusion-mobile.apk" \
+            | grep 'lib/arm64-v8a/'
+
+          unzip -j -o \
+            "$RUNNER_TEMP/upstream-apk/facefusion-mobile.apk" \
+            'lib/arm64-v8a/*' \
+            -d prebuilt-native/arm64-v8a
+
+          test -f prebuilt-native/arm64-v8a/libffnative.so
+
+          echo "Extracted native libraries:"
+          find prebuilt-native -maxdepth 2 -type f -printf '%P\n' | sort
+
+      - name: Configure Gradle to use prebuilt native libraries
+        shell: bash
+        working-directory: work/android
+        run: |
+          set -Eeuo pipefail
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path("app/build.gradle.kts")
+          text = path.read_text()
+
+          old = '''tasks.named("preBuild") {
+              dependsOn(qnnStage)
+          }'''
+
+          new = '''if (prebuiltNativeDir == null) {
+              tasks.named("preBuild") {
+                  dependsOn(qnnStage)
+              }
+          }'''
+
+          if old not in text:
+              raise SystemExit(
+                  "Expected preBuild/qnnStage block was not found. "
+                  "The Gradle file has changed."
+              )
+
+          path.write_text(text.replace(old, new, 1))
+          PY
+
+          grep -A5 -B2 'preBuild' app/build.gradle.kts
 
       - name: Build Debug APK
-        working-directory: work/android
         shell: bash
+        working-directory: work/android
         run: |
-          set -euxo pipefail
-          chmod +x ./gradlew
-          ./gradlew --no-daemon --stacktrace :app:assembleDebug
+          set -Eeuo pipefail
 
-      - name: Upload APK
+          chmod +x ./gradlew
+
+          ./gradlew \
+            --no-daemon \
+            --stacktrace \
+            :app:assembleDebug \
+            -PprebuiltNativeDir="$PWD/prebuilt-native"
+
+      - name: Upload Debug APK
         uses: actions/upload-artifact@v4
         with:
-          name: facefusion-mobile-debug
+          name: facefusion-mobile-debug-apk
           path: work/android/app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
