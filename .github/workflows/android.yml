@@ -24,12 +24,10 @@ jobs:
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Install Android packages
+      - name: Install Android SDK packages
         shell: bash
         run: |
           set -Eeuo pipefail
-
-          yes | sdkmanager --licenses >/dev/null || true
 
           sdkmanager --install \
             "platform-tools" \
@@ -38,33 +36,82 @@ jobs:
             "cmake;3.22.1" \
             "ndk;27.2.12479018"
 
-      - name: Verify native build inputs
+          yes | sdkmanager --licenses >/dev/null || true
+
+      - name: Download matching native libraries
         shell: bash
         working-directory: work/android
         run: |
           set -Eeuo pipefail
 
-          if [[ -n "${QNN_SDK_ROOT:-}" ]]; then
-            echo "QNN_SDK_ROOT is configured: $QNN_SDK_ROOT"
-            bash ./stage_qnn.sh
-          elif [[ -f app/src/main/cpp/include/QNN/QnnBackend.h ]] && \
-               [[ -f app/src/main/jniLibs/arm64-v8a/libQnnHtp.so ]] && \
-               [[ -f app/src/main/jniLibs/arm64-v8a/libQnnSystem.so ]]; then
-            echo "Using QNN inputs already present in the checkout."
-          else
-            echo "::error::QNN native build inputs are missing."
-            echo "Provide a QAIRT SDK through QNN_SDK_ROOT or add the missing staged inputs."
-            echo "See work/android/BUILDING.md and work/android/stage_qnn.sh."
-            exit 1
-          fi
+          mkdir -p "$RUNNER_TEMP/upstream-apk"
+          mkdir -p prebuilt-native/arm64-v8a
+
+          curl --fail --location \
+            --retry 5 \
+            --retry-all-errors \
+            -o "$RUNNER_TEMP/upstream-apk/facefusion-mobile.apk" \
+            "https://github.com/AbrahamPaulJ/facefusion-mobile/releases/download/v0.9.0/facefusion-mobile-0.9.0-release.apk"
+
+          unzip -l "$RUNNER_TEMP/upstream-apk/facefusion-mobile.apk" \
+            | grep 'lib/arm64-v8a/'
+
+          unzip -j -o \
+            "$RUNNER_TEMP/upstream-apk/facefusion-mobile.apk" \
+            'lib/arm64-v8a/*' \
+            -d prebuilt-native/arm64-v8a
+
+          test -f prebuilt-native/arm64-v8a/libffnative.so
+
+          echo "Extracted native libraries:"
+          find prebuilt-native -maxdepth 2 -type f -printf '%P\n' | sort
+
+      - name: Configure Gradle to use prebuilt native libraries
+        shell: bash
+        working-directory: work/android
+        run: |
+          set -Eeuo pipefail
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path("app/build.gradle.kts")
+          text = path.read_text()
+
+          old = '''tasks.named("preBuild") {
+              dependsOn(qnnStage)
+          }'''
+
+          new = '''if (prebuiltNativeDir == null) {
+              tasks.named("preBuild") {
+                  dependsOn(qnnStage)
+              }
+          }'''
+
+          if old not in text:
+              raise SystemExit(
+                  "Expected preBuild/qnnStage block was not found. "
+                  "The Gradle file has changed."
+              )
+
+          path.write_text(text.replace(old, new, 1))
+          PY
+
+          grep -A5 -B2 'preBuild' app/build.gradle.kts
 
       - name: Build Debug APK
         shell: bash
         working-directory: work/android
         run: |
           set -Eeuo pipefail
+
           chmod +x ./gradlew
-          ./gradlew --no-daemon --stacktrace :app:assembleDebug
+
+          ./gradlew \
+            --no-daemon \
+            --stacktrace \
+            :app:assembleDebug \
+            -PprebuiltNativeDir="$PWD/prebuilt-native"
 
       - name: Upload Debug APK
         uses: actions/upload-artifact@v4
