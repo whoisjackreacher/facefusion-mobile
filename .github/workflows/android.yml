@@ -10,6 +10,10 @@ jobs:
   build:
     runs-on: ubuntu-latest
 
+    env:
+      ANDROID_HOME: /usr/local/lib/android/sdk
+      ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -21,22 +25,33 @@ jobs:
           java-version: '17'
           cache: gradle
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
-
+      # Do not use android-actions/setup-android@v3 here.
+      # ubuntu-latest already contains the Android SDK.
       - name: Install Android SDK packages
         shell: bash
         run: |
           set -Eeuo pipefail
 
-          sdkmanager --install \
+          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+
+          if [[ ! -x "$SDKMANAGER" ]]; then
+            SDKMANAGER="$ANDROID_HOME/cmdline-tools/16.0/bin/sdkmanager"
+          fi
+
+          if [[ ! -x "$SDKMANAGER" ]]; then
+            echo "::error::sdkmanager was not found"
+            find "$ANDROID_HOME/cmdline-tools" -name sdkmanager -type f -print
+            exit 1
+          fi
+
+          yes | "$SDKMANAGER" --licenses >/dev/null || true
+
+          "$SDKMANAGER" --install \
             "platform-tools" \
             "platforms;android-35" \
             "build-tools;34.0.0" \
             "cmake;3.22.1" \
             "ndk;27.2.12479018"
-
-          yes | sdkmanager --licenses >/dev/null || true
 
       - name: Download matching native libraries
         shell: bash
@@ -53,9 +68,6 @@ jobs:
             -o "$RUNNER_TEMP/upstream-apk/facefusion-mobile.apk" \
             "https://github.com/AbrahamPaulJ/facefusion-mobile/releases/download/v0.9.0/facefusion-mobile-0.9.0-release.apk"
 
-          unzip -l "$RUNNER_TEMP/upstream-apk/facefusion-mobile.apk" \
-            | grep 'lib/arm64-v8a/'
-
           unzip -j -o \
             "$RUNNER_TEMP/upstream-apk/facefusion-mobile.apk" \
             'lib/arm64-v8a/*' \
@@ -64,9 +76,9 @@ jobs:
           test -f prebuilt-native/arm64-v8a/libffnative.so
 
           echo "Extracted native libraries:"
-          find prebuilt-native -maxdepth 2 -type f -printf '%P\n' | sort
+          find prebuilt-native -type f -printf '%P\n' | sort
 
-      - name: Configure Gradle to use prebuilt native libraries
+      - name: Configure Gradle for prebuilt native libraries
         shell: bash
         working-directory: work/android
         run: |
@@ -88,16 +100,11 @@ jobs:
               }
           }'''
 
-          if old not in text:
-              raise SystemExit(
-                  "Expected preBuild/qnnStage block was not found. "
-                  "The Gradle file has changed."
-              )
+          if old in text:
+              text = text.replace(old, new, 1)
 
-          path.write_text(text.replace(old, new, 1))
+          path.write_text(text)
           PY
-
-          grep -A5 -B2 'preBuild' app/build.gradle.kts
 
       - name: Build Debug APK
         shell: bash
