@@ -8,7 +8,6 @@ permissions:
 
 jobs:
   build:
-    name: Build Android APK
     runs-on: ubuntu-latest
 
     env:
@@ -19,25 +18,18 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      -  name: Set up Java 17
+      - name: Set up Java 17
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '17'
           cache: gradle
 
-      - name: Install required Android packages
-        shell: bash
+      - name: Install Android packages
         run: |
-          set -euxo pipefail
+          SDKMANAGER="$ANDROID_SDK_ROOT/cmdline-tools/16.0/bin/sdkmanager"
 
-          SDKMANAGER="$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"
-
-          if [ ! -x "$SDKMANAGER" ]; then
-            SDKMANAGER="$ANDROID_SDK_ROOT/cmdline-tools/16.0/bin/sdkmanager"
-          fi
-
-          yes | "$SDKMANAGER" --sdk_root="$ANDROID_SDK_ROOT" --licenses >/dev/null || true
+          yes | "$SDKMANAGER" --sdk_root="$ANDROID_SDK_ROOT" --licenses || true
 
           "$SDKMANAGER" --sdk_root="$ANDROID_SDK_ROOT" --install \
             "platform-tools" \
@@ -46,19 +38,15 @@ jobs:
             "cmake;3.22.1" \
             "ndk;27.2.12479018"
 
-      - name: Verify Android project
-        shell: bash
+      - name: Verify project files
         run: |
-          set -euxo pipefail
+          pwd
+          find work/android -maxdepth 1 -type f -print
           test -f work/android/gradlew
-          test -f work/android/settings.gradle.kts
-          ls -la work/android
 
       - name: Build Debug APK
-        working-directory: work/android
-        shell: bash
         run: |
-          set -euxo pipefail
+          cd work/android
           chmod +x ./gradlew
           ./gradlew --no-daemon --stacktrace :app:assembleDebug
 
