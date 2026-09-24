@@ -21,44 +21,54 @@ jobs:
           java-version: '17'
           cache: gradle
 
-      - name: Find Android SDK
-        shell:name sdkmanager -perm -111 2>/dev/null | head -n 1)"
-
-          if [ -z "$SDKMANAGER" ]; then
-            SDKMANAGER="$(find "/usr/local/lib/android/sdk" -type f -name sdkmanager 2>/dev/null | head -n 1)"
-          fi
-
-          if [ -z "$SDKMANAGER" ]; then
-            echo "sdkmanager was not found"
-            find "$ANDROID_HOME" -maxdepth 4 -type f 2>/dev/null | head -100
-            exit 1
-          fi
-
-          echo "Found sdkmanager at: $SDKMANAGER"
-          echo "SDKMANAGER=$SDKMANAGER" >> "$GITHUB_ENV"
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
 
       - name: Install Android packages
         shell: bash
         run: |
-          set -e
+          set -Eeuo pipefail
 
-          yes | "$SDKMANAGER" --licenses >/dev/null || true
+          yes | sdkmanager --licenses >/dev/null || true
 
-          "$SDKMANAGER" --install \
+          sdkmanager --install \
             "platform-tools" \
             "platforms;android-35" \
             "build-tools;34.0.0" \
             "cmake;3.22.1" \
-            "ndk;27.2.124.gradle.kts
-          ls -la work/android
+            "ndk;27.2.12479018"
 
+      - name: Verify native build inputs
+        shell: bash
+        working-directory: work/android
+        run: |
+          set -Eeuo pipefail
+
+          if [[ -n "${QNN_SDK_ROOT:-}" ]]; then
+            echo "QNN_SDK_ROOT is configured: $QNN_SDK_ROOT"
+            bash ./stage_qnn.sh
+          elif [[ -f app/src/main/cpp/include/QNN/QnnBackend.h ]] && \
+               [[ -f app/src/main/jniLibs/arm64-v8a/libQnnHtp.so ]] && \
+               [[ -f app/src/main/jniLibs/arm64-v8a/libQnnSystem.so ]]; then
+            echo "Using QNN inputs already present in the checkout."
+          else
+            echo "::error::QNN native build inputs are missing."
+            echo "Provide a QAIRT SDK through QNN_SDK_ROOT or add the missing staged inputs."
+            echo "See work/android/BUILDING.md and work/android/stage_qnn.sh."
+            exit 1
+          fi
 
       - name: Build Debug APK
         shell: bash
+        working-directory: work/android
         run: |
-          set -e
-          cd work/android
+          set -Eeuo pipefail
           chmod +x ./gradlew
-          ./gradlewfusion-mobile-debug
+          ./gradlew --no-daemon --stacktrace :app:assembleDebug
+
+      - name: Upload Debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: facefusion-mobile-debug-apk
           path: work/android/app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
